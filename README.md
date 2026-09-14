@@ -75,10 +75,38 @@ system — they are dev tooling only.
 mongo-express sits behind the `tools` compose profile, so a plain
 `docker compose up -d` still starts only Postgres and Mongo.
 
+## Endpoints
+
+All read path. Nothing here claims a seat, so everything is cacheable and safe
+to serve slightly stale.
+
+| Route                          | Serves                                              |
+| ------------------------------ | --------------------------------------------------- |
+| `GET /movies`                  | Catalog grid. Mongo only.                           |
+| `GET /cinemas`                 | Cinema filter, with screen counts. Postgres only.   |
+| `GET /cinemas/:slug/showtimes` | One cinema's schedule for one day. **Both stores.** |
+| `GET /health`                  | Status of both databases.                           |
+
+`showtimes` takes an optional `?date=YYYY-MM-DD`; omit it and the API returns
+the first day it has showings for, along with the full list of available dates
+so the client can render a date picker without a second round trip.
+
+It is the one endpoint that performs the polyglot join: shows, screens and
+prices come from Postgres, then `shows.movie_id` is resolved against the Mongo
+catalog in application code, because no foreign key can span the two stores. A
+`movie_id` that resolves to nothing drops that one film from the listing rather
+than failing the request — an unenforceable reference has to degrade, not throw.
+
 ## Current stage
 
 Build stage 1 complete: Postgres schema, migrations, seed data, Mongo catalog
-seeded alongside, and a read-only browse page.
+seeded alongside, and a read-only browse page — catalog grid, cinema filter, and
+per-cinema showtimes with screen, format and price.
+
+Showtimes are deliberately **not** clickable and carry no seat availability.
+Both belong to the write path: a seat count would mean inventing the
+HELD-vs-BOOKED semantics that reserve/confirm has not defined yet, and with
+every seat currently AVAILABLE it would read "200 left" everywhere regardless.
 
 Next: booking service — reserve and confirm endpoints with Postgres-only
 concurrency control, proven by a test firing hundreds of concurrent claims at a
