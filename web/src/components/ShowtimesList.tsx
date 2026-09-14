@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { fetchShowtimes, type MovieShowtimes, type Show } from "./api";
+import { fetchShowtimes, type MovieShowtimes, type Show } from "../lib/api";
 import { Poster, certificationLabel } from "./MovieCard";
-import { dateLabel, dayLabel, priceLabel, timeLabel } from "./format";
+import { dateLabel, dayLabel, priceLabel, timeLabel } from "../lib/format";
 
 /// One showing, now a link into the seat map. It was deliberately static while
 /// the write path did not exist; it does, so the tile leads somewhere.

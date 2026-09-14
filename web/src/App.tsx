@@ -1,8 +1,8 @@
 import { Link, Route, Routes } from "react-router-dom";
-import BrowsePage from "./BrowsePage";
+import BrowsePage from "./pages/BrowsePage";
 import ConfirmationPage from "./pages/ConfirmationPage";
 import SeatMapPage from "./pages/SeatMapPage";
-import { shortDeviceId } from "./device";
+import { shortDeviceId } from "./lib/device";
 
 export default function App() {
   return (

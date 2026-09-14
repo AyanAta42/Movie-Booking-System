@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, confirmReservation, fetchReservation } from "../api";
-import { priceLabel, timeLabel } from "../format";
+import { ApiError, confirmReservation, fetchReservation } from "../lib/api";
+import { priceLabel, timeLabel } from "../lib/format";
 
 /// Counts down from the server's `secondsRemaining`. Display only — the server
 /// decides whether a hold is still valid, and this hitting zero is a prompt to

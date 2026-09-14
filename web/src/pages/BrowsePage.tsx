@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchCinemas, fetchMovies, type Cinema } from "./api";
-import MovieCard from "./MovieCard";
-import ShowtimesList from "./ShowtimesList";
+import { fetchCinemas, fetchMovies, type Cinema } from "../lib/api";
+import MovieCard from "../components/MovieCard";
+import ShowtimesList from "../components/ShowtimesList";
 
 /// `null` means "All cinemas", which shows the catalog rather than a schedule.
 /// Showtimes only mean something at a specific cinema — a merged listing across

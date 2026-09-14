@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, createReservation, fetchSeatMap, type SeatMapSeat } from "../api";
-import { priceLabel, timeLabel } from "../format";
+import { ApiError, createReservation, fetchSeatMap, type SeatMapSeat } from "../lib/api";
+import { priceLabel, timeLabel } from "../lib/format";
 
 const MAX_SEATS = 10;
 

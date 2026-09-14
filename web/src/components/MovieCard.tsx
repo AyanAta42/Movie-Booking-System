@@ -1,5 +1,5 @@
-import type { Movie } from "./api";
-import { posterGradient, runtimeLabel } from "./format";
+import type { Movie } from "../lib/api";
+import { posterGradient, runtimeLabel } from "../lib/format";
 
 /// The poster block, sized by its container so the same component works as a
 /// full card in the catalog grid and as a thumbnail beside a list of showtimes.
