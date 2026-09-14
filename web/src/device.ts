@@ -19,6 +19,34 @@ function read(): string | null {
   }
 }
 
+/// A v4 UUID that works over plain HTTP on a LAN address.
+///
+/// `crypto.randomUUID()` is restricted to secure contexts. localhost counts as
+/// one, so it works on the dev machine and then throws on a phone hitting
+/// http://192.168.x.x — which took down the whole app, because App renders the
+/// device id. `crypto.getRandomValues` carries no such restriction, so the UUID
+/// is assembled from it and randomUUID is only a fast path.
+function newUuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    // Last resort. Not cryptographically sound, but this id only needs to be
+    // unique across a handful of devices, not unguessable.
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 let cached: string | null = null;
 
 export function deviceId(): string {
@@ -30,7 +58,7 @@ export function deviceId(): string {
     return cached;
   }
 
-  const fresh = crypto.randomUUID();
+  const fresh = newUuid();
   try {
     localStorage.setItem(KEY, fresh);
   } catch {
