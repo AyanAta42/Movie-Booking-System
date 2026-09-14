@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mbp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mbp
+      POSTGRES_PASSWORD: mbp
+      POSTGRES_DB: mbp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mbp -d mbp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    container_name: mbp-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Browser-based viewer for the Mongo catalog. Dev tooling only, so it sits
+  # behind a compose profile and does NOT start with `docker compose up -d`.
+  # Start it explicitly:  docker compose --profile tools up -d
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: mbp-mongo-express
+    profiles: ["tools"]
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017
+      ME_CONFIG_BASICAUTH: "false"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  mongo-data:

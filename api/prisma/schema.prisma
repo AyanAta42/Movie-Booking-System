@@ -1,0 +1,113 @@
+// Postgres is the transactional source of truth.
+// Nothing in here is catalog content — movie metadata lives in MongoDB and is
+// referenced only by the opaque `Show.movieId` string. No foreign key is
+// possible across the two stores; the application enforces that join.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Cinema {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique
+  name      String
+  city      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  screens Screen[]
+
+  @@map("cinemas")
+}
+
+model Screen {
+  id       String @id @default(uuid()) @db.Uuid
+  cinemaId String @map("cinema_id") @db.Uuid
+  name     String
+
+  cinema Cinema @relation(fields: [cinemaId], references: [id], onDelete: Cascade)
+  seats  Seat[]
+  shows  Show[]
+
+  @@unique([cinemaId, name])
+  @@map("screens")
+}
+
+enum SeatKind {
+  STANDARD
+  PREMIUM
+  ACCESSIBLE
+}
+
+/// The physical seat bolted to the floor of a screen. Exists once, forever,
+/// independent of any showing.
+model Seat {
+  id       String   @id @default(uuid()) @db.Uuid
+  screenId String   @map("screen_id") @db.Uuid
+  rowLabel String   @map("row_label") @db.VarChar(2)
+  number   Int
+  kind     SeatKind @default(STANDARD)
+
+  screen    Screen     @relation(fields: [screenId], references: [id], onDelete: Cascade)
+  showSeats ShowSeat[]
+
+  @@unique([screenId, rowLabel, number])
+  @@map("seats")
+}
+
+model Show {
+  id         String   @id @default(uuid()) @db.Uuid
+  screenId   String   @map("screen_id") @db.Uuid
+  /// MongoDB movie document _id, as a plain string. Deliberately not a foreign key.
+  movieId    String   @map("movie_id")
+  startsAt   DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt     DateTime @map("ends_at") @db.Timestamptz(3)
+  /// Money is always integer minor units. Never a float.
+  priceCents Int      @map("price_cents")
+  format     String   @default("2D")
+
+  screen    Screen     @relation(fields: [screenId], references: [id], onDelete: Cascade)
+  showSeats ShowSeat[]
+
+  @@unique([screenId, startsAt])
+  @@index([movieId, startsAt])
+  @@map("shows")
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+/// One materialised row per seat per showing.
+///
+/// These rows are created up front when the show is created, NOT lazily on
+/// booking. That is the whole point: "available" has to be a row that can be
+/// locked and conditionally updated, rather than the absence of a row that two
+/// concurrent inserts would race to create.
+///
+/// The @@unique([showId, seatId]) constraint is what makes a double-booking
+/// physically impossible at the storage layer. Everything above it — the
+/// conditional UPDATE, and later the Redis claim layer — is an optimisation
+/// that rejects losers earlier and more cheaply. This line is the guarantee.
+model ShowSeat {
+  id      String     @id @default(uuid()) @db.Uuid
+  showId  String     @map("show_id") @db.Uuid
+  seatId  String     @map("seat_id") @db.Uuid
+  status  SeatStatus @default(AVAILABLE)
+  /// Bumped on every state transition. Gives optimistic-concurrency callers
+  /// something to compare against, and makes contention visible in the data.
+  version Int        @default(0)
+
+  show Show @relation(fields: [showId], references: [id], onDelete: Cascade)
+  seat Seat @relation(fields: [seatId], references: [id], onDelete: Cascade)
+
+  @@unique([showId, seatId])
+  @@index([showId, status])
+  @@map("show_seats")
+}
