@@ -54,7 +54,11 @@ async function main() {
 
   // Wiped and rebuilt every run. Safe only because nothing here is real user
   // data yet — once orders exist this becomes a guarded dev-only script.
+  // Order matters. show_seats reference holds with onDelete: Restrict, so the
+  // seat rows have to go before the holds they point at. Users are deliberately
+  // left alone — each device upserts its own on next request.
   await prisma.showSeat.deleteMany();
+  await prisma.hold.deleteMany();
   await prisma.show.deleteMany();
   await prisma.seat.deleteMany();
   await prisma.screen.deleteMany();
@@ -82,12 +86,16 @@ async function main() {
       });
       screenCount++;
 
-      const seatRows = ROWS.flatMap((rowLabel) =>
+      // gridRow/gridCol are stored, not derived: ROWS skips "I" by cinema
+      // convention, so the row index cannot be computed from the letter.
+      const seatRows = ROWS.flatMap((rowLabel, rowIndex) =>
         Array.from({ length: SEATS_PER_ROW }, (_, i) => ({
           screenId: screen.id,
           rowLabel,
           number: i + 1,
           kind: seatKind(rowLabel, i + 1),
+          gridRow: rowIndex,
+          gridCol: i,
         }))
       );
       await prisma.seat.createMany({ data: seatRows });
@@ -126,8 +134,15 @@ async function main() {
           // Materialise one row per seat per showing, up front. "Available" must
           // be a row that can be locked and conditionally updated, not the
           // absence of a row that two concurrent inserts would race to create.
+          // Price is captured onto each row here rather than read through from
+          // the show at checkout, so a later price change cannot reprice a seat
+          // somebody is already holding.
           await prisma.showSeat.createMany({
-            data: seats.map((seat) => ({ showId: show.id, seatId: seat.id })),
+            data: seats.map((seat) => ({
+              showId: show.id,
+              seatId: seat.id,
+              priceCents: show.priceCents,
+            })),
           });
           showSeatCount += seats.length;
         }

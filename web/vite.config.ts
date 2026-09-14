@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
+    // Bind all interfaces, not just loopback: the point of this build is
+    // reserving from a phone on the same network, which cannot reach localhost.
+    host: true,
     // Proxying /api to the API process keeps the browser on one origin, so
     // there is no CORS to configure. When the gateway lands in stage 3 it takes
     // over this job in production; this is the dev-time stand-in.

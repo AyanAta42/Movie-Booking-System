@@ -1,26 +1,34 @@
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchShowtimes, type MovieShowtimes, type Show } from "./api";
 import { Poster, certificationLabel } from "./MovieCard";
 import { dateLabel, dayLabel, priceLabel, timeLabel } from "./format";
 
-/// One showing. Not a button: reserving a seat is the write path, and it does
-/// not exist yet. A clickable tile that led nowhere would be a worse lie than
-/// an honestly static one.
+/// One showing, now a link into the seat map. It was deliberately static while
+/// the write path did not exist; it does, so the tile leads somewhere.
 function ShowTile({ show }: { show: Show }) {
   return (
-    <li className="rounded-md border border-neutral-800 bg-neutral-900/60 px-3 py-2">
-      <div className="flex items-baseline gap-2">
-        <span className="text-sm font-medium tabular-nums text-neutral-100">
-          {timeLabel(show.startsAt)}
-        </span>
-        {show.format !== "2D" && (
-          <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-300">
-            {show.format}
+    <li>
+      <Link
+        to={`/shows/${show.id}/seats`}
+        className="block rounded-md border border-neutral-800 bg-neutral-900/60 px-3 py-2 transition hover:border-neutral-600 hover:bg-neutral-800"
+      >
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-medium tabular-nums text-neutral-100">
+            {timeLabel(show.startsAt)}
           </span>
-        )}
-      </div>
-      <div className="mt-0.5 text-xs text-neutral-400">{show.screen}</div>
-      <div className="text-xs tabular-nums text-neutral-500">{priceLabel(show.priceCents)}</div>
+          {show.format !== "2D" && (
+            <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-300">
+              {show.format}
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 text-xs text-neutral-400">{show.screen}</div>
+        <div className="text-xs tabular-nums text-neutral-500">{priceLabel(show.priceCents)}</div>
+        <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-emerald-400">
+          Book
+        </div>
+      </Link>
     </li>
   );
 }

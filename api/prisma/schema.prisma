@@ -51,11 +51,23 @@ model Seat {
   rowLabel String   @map("row_label") @db.VarChar(2)
   number   Int
   kind     SeatKind @default(STANDARD)
+  /// Zero-based position in the screen's seating grid, for rendering the seat
+  /// map. Stored rather than derived from `rowLabel`/`number`, because a screen
+  /// is not guaranteed to be a rectangle: an aisle leaves a gap mid-row, and row
+  /// letters skip "I" by cinema convention, so neither coordinate follows from
+  /// the label. Deriving it would encode "every screen is a dense grid" into the
+  /// read path — true of the seed, not of a real cinema.
+  gridRow  Int      @map("grid_row")
+  gridCol  Int      @map("grid_col")
 
   screen    Screen     @relation(fields: [screenId], references: [id], onDelete: Cascade)
   showSeats ShowSeat[]
 
   @@unique([screenId, rowLabel, number])
+  /// Two seats cannot occupy one cell. Not requested, but it is the constraint
+  /// that stops a seed bug from quietly producing overlapping seats that the
+  /// seat map would then draw on top of each other.
+  @@unique([screenId, gridRow, gridCol])
   @@map("seats")
 }
 
@@ -72,6 +84,7 @@ model Show {
 
   screen    Screen     @relation(fields: [screenId], references: [id], onDelete: Cascade)
   showSeats ShowSeat[]
+  holds     Hold[]
 
   @@unique([screenId, startsAt])
   @@index([movieId, startsAt])
@@ -96,18 +109,99 @@ enum SeatStatus {
 /// conditional UPDATE, and later the Redis claim layer — is an optimisation
 /// that rejects losers earlier and more cheaply. This line is the guarantee.
 model ShowSeat {
-  id      String     @id @default(uuid()) @db.Uuid
-  showId  String     @map("show_id") @db.Uuid
-  seatId  String     @map("seat_id") @db.Uuid
-  status  SeatStatus @default(AVAILABLE)
+  id         String     @id @default(uuid()) @db.Uuid
+  showId     String     @map("show_id") @db.Uuid
+  seatId     String     @map("seat_id") @db.Uuid
+  status     SeatStatus @default(AVAILABLE)
   /// Bumped on every state transition. Gives optimistic-concurrency callers
   /// something to compare against, and makes contention visible in the data.
-  version Int        @default(0)
+  version    Int        @default(0)
+  /// Copied from `Show.priceCents` when this row is materialised, not read
+  /// through at checkout. A price change on the show must not silently reprice a
+  /// seat somebody is already holding — what the customer was quoted is what
+  /// they pay, so the quote has to live on the row being claimed.
+  priceCents Int        @map("price_cents")
+  /// The hold currently claiming this seat, if any. Null whenever status is
+  /// AVAILABLE. A seat can be claimed by at most one hold, so this is a plain
+  /// nullable FK rather than a join table — which also keeps the claim a single
+  /// statement, instead of writing join rows and flipping status separately and
+  /// reopening the window between the two.
+  holdId     String?    @map("hold_id") @db.Uuid
 
-  show Show @relation(fields: [showId], references: [id], onDelete: Cascade)
-  seat Seat @relation(fields: [seatId], references: [id], onDelete: Cascade)
+  show Show  @relation(fields: [showId], references: [id], onDelete: Cascade)
+  seat Seat  @relation(fields: [seatId], references: [id], onDelete: Cascade)
+  /// Restrict, deliberately. Cascade would make deleting a hold delete seat
+  /// inventory. SetNull would null this column while status stayed HELD, leaving
+  /// a seat held by nobody and bookable by nobody. Holds are meant to transition
+  /// to EXPIRED or CANCELLED, never to be deleted, so a delete attempt should
+  /// fail loudly rather than corrupt inventory quietly.
+  hold Hold? @relation(fields: [holdId], references: [id], onDelete: Restrict)
 
   @@unique([showId, seatId])
   @@index([showId, status])
+  /// Answers "which seats does this hold cover?" without a scan, and is used by
+  /// Postgres itself to enforce the Restrict above.
+  @@index([holdId])
   @@map("show_seats")
+}
+
+/// Placeholder identity. There is no auth this session, so this model exists to
+/// give a hold an owner and to make `@@unique([userId, idempotencyKey])` mean
+/// something — an idempotency key is only ever unique *per caller*. Seeded with
+/// a single row that the reservation endpoint acts as until auth lands.
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  holds Hold[]
+
+  @@map("users")
+}
+
+enum HoldStatus {
+  ACTIVE
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+}
+
+/// A time-boxed claim over one or more seats at a single show.
+///
+/// The hold is what the customer experiences as "these seats are mine for ten
+/// minutes". It is deliberately a row of its own rather than just a timestamp on
+/// each show_seat: a reservation succeeds or fails as a set, and that set needs
+/// one identity to confirm, expire, or retry against.
+model Hold {
+  id             String     @id @default(uuid()) @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  /// Denormalised from the seats. Every seat in a hold belongs to one show, so
+  /// storing it here makes "active holds for this show" an indexed lookup rather
+  /// than a join back through show_seats.
+  showId         String     @map("show_id") @db.Uuid
+  status         HoldStatus @default(ACTIVE)
+  /// An absolute instant, not a duration. The expiry has to survive process
+  /// restarts and be comparable in SQL, which a "10 minutes from now" interval
+  /// measured against an application clock would not be.
+  expiresAt      DateTime   @map("expires_at") @db.Timestamptz(3)
+  /// Supplied by the caller. NOT NULL on purpose: Postgres treats NULLs as
+  /// distinct in a unique index, so a nullable key would let one user create
+  /// unlimited key-less holds with the constraint below never once firing.
+  idempotencyKey String     @map("idempotency_key")
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  show      Show       @relation(fields: [showId], references: [id], onDelete: Cascade)
+  showSeats ShowSeat[]
+
+  /// The idempotency guarantee. A retry with the same key collides here, which
+  /// is what allows the second caller to be handed the original hold instead of
+  /// a second one.
+  @@unique([userId, idempotencyKey])
+  /// The sweeper's query next session: ACTIVE holds whose expiry has passed.
+  /// Status leads because it is the more selective column once most holds have
+  /// reached a terminal state.
+  @@index([status, expiresAt])
+  @@map("holds")
 }
