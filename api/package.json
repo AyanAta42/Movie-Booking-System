@@ -11,7 +11,11 @@
     "prisma:studio": "prisma studio",
     "seed": "npm run seed:mongo && npm run seed:postgres",
     "seed:mongo": "tsx src/seed/mongo.ts",
-    "seed:postgres": "tsx src/seed/postgres.ts"
+    "seed:postgres": "tsx src/seed/postgres.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest run --reporter=verbose",
+    "test:load": "tsx tests/load/burst.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
@@ -24,6 +28,7 @@
     "@types/node": "^22.13.0",
     "prisma": "^6.5.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
   }
 }
