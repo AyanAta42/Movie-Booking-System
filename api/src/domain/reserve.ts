@@ -10,7 +10,7 @@ import {
 import { getReservation, type Reservation } from "../queries/reservations";
 
 /// How long a hold survives without being confirmed.
-export const HOLD_MINUTES = 10;
+export const HOLD_MINUTES = 0.1;
 
 /// A cap, so one caller cannot claim an entire screen in one request.
 const MAX_SEATS = 10;
@@ -85,10 +85,8 @@ export async function reserve(input: ReserveInput): Promise<Reservation> {
 
   try {
     const holdId = await prisma.$transaction(async (tx) => {
-      // Reclaim seats whose hold has lapsed. Expiry is resolved here rather than
-      // by a background sweeper: a lapsed hold stops claiming its seats the
-      // moment somebody tries to take them. Scoped to this show so the write
-      // stays small under load instead of touching the whole holds table.
+      
+      // Expired Holds let go of their seats
       await tx.$executeRaw`
         UPDATE show_seats ss
         SET status = 'AVAILABLE', hold_id = NULL, version = ss.version + 1
@@ -101,22 +99,21 @@ export async function reserve(input: ReserveInput): Promise<Reservation> {
               AND h.expires_at <= now()
           )
       `;
-      // Seats first, then the holds — the statement above reads the holds it is
-      // releasing, so expiring them earlier would hide them from that subquery.
+
+      // Clean up manually - change all active holds that have expired to expired
       await tx.$executeRaw`
         UPDATE holds
         SET status = 'EXPIRED'
         WHERE show_id = ${showId}::uuid AND status = 'ACTIVE' AND expires_at <= now()
       `;
 
-      // Created before the claim so the seats have something to point at. If the
-      // claim then fails, this rolls back with it and no orphan hold survives.
+      // Create Hold
       const hold = await tx.hold.create({
         data: { userId, showId, expiresAt, idempotencyKey },
         select: { id: true },
       });
 
-      // The claim.
+      // Lock each one, check it's free, take it
       //
       // The CTE takes the row locks in a deterministic order (`ORDER BY seat_id`
       // with FOR UPDATE) before anything is written. Without that, two callers
