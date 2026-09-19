@@ -31,13 +31,17 @@ export async function attachDevice(req: Request, _res: Response, next: NextFunct
 
     const id = header.toLowerCase();
 
-    // Upsert rather than create: the same device hits this on every request.
-    // `update: {}` makes a repeat visit a no-op instead of a pointless write.
-    await prisma.user.upsert({
-      where: { id },
-      create: { id, email: `${id}@device.local`, name: `Device ${id.slice(0, 8)}` },
-      update: {},
-    });
+    // Create-if-missing in one statement. The same device hits this on every
+    // request, and a new device's first requests can arrive together — a
+    // double-tap on Reserve. Prisma's `upsert` runs here as a SELECT followed by
+    // an INSERT, so concurrent first requests all see "no user", all insert, and
+    // all but one fail on users_pkey as a 500. ON CONFLICT does the check and
+    // the write atomically, so a repeat visit is a no-op rather than a race.
+    await prisma.$executeRaw`
+      INSERT INTO users (id, email, name)
+      VALUES (${id}::uuid, ${`${id}@device.local`}, ${`Device ${id.slice(0, 8)}`})
+      ON CONFLICT (id) DO NOTHING
+    `;
 
     req.userId = id;
     next();
