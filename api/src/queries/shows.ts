@@ -1,5 +1,5 @@
-import { prisma } from "../db/postgres";
 import { BadRequestError, NotFoundError } from "../errors";
+import { CinemaModel, ShowtimeModel } from "../models/catalog";
 import { findMoviesByIds, type MovieListItem } from "./movies";
 
 /// One showing, flattened for the wire. `screen` is denormalised down to its
@@ -60,10 +60,14 @@ function localDateKey(at: Date): string {
 
 /// Read path: the showtimes listing for one cinema on one day.
 ///
-/// Three queries, deliberately: the cinema, the set of days it has shows for,
-/// and the shows themselves. The alternative — one fat query returning every
-/// show at the cinema and filtering in memory — reads more cleanly at 84 rows
-/// and falls over at 84,000.
+/// Mongo only. Cinemas and showtimes are browsing's projection of the schedule
+/// Postgres owns (src/models/catalog.ts), so a listing never touches the
+/// database that arbitrates seat claims — a browse spike cannot slow a booking.
+///
+/// Four queries, deliberately: the cinema, the set of days it has shows for,
+/// the shows themselves, and their films. The alternative — one fat query
+/// returning every show at the cinema and filtering in memory — reads more
+/// cleanly at 84 rows and falls over at 84,000.
 export async function listShowtimes(
   cinemaSlug: string,
   requestedDate?: string
@@ -72,21 +76,17 @@ export async function listShowtimes(
     throw new BadRequestError(`date must be formatted YYYY-MM-DD, received "${requestedDate}"`);
   }
 
-  const cinema = await prisma.cinema.findUnique({
-    where: { slug: cinemaSlug },
-    select: { id: true, slug: true, name: true, city: true },
-  });
-  if (!cinema) {
+  const doc = await CinemaModel.findOne({ slug: cinemaSlug }).lean();
+  if (!doc) {
     throw new NotFoundError(`No cinema with slug "${cinemaSlug}"`);
   }
+  const cinema = { id: doc._id, slug: doc.slug, name: doc.name, city: doc.city };
 
-  // One column, ordered, so the date picker is driven by what actually exists
+  // One field, ordered, so the date picker is driven by what actually exists
   // rather than by a hardcoded seven-day window the seed might disagree with.
-  const starts = await prisma.show.findMany({
-    where: { screen: { cinemaId: cinema.id } },
-    select: { startsAt: true },
-    orderBy: { startsAt: "asc" },
-  });
+  const starts = await ShowtimeModel.find({ cinemaId: cinema.id }, { startsAt: 1 })
+    .sort({ startsAt: 1 })
+    .lean();
   const dates = [...new Set(starts.map((s) => localDateKey(s.startsAt)))];
 
   // A cinema with no shows is a real state — a new site, or one between
@@ -103,19 +103,12 @@ export async function listShowtimes(
     throw new BadRequestError(`"${date}" is not a real calendar date`);
   }
 
-  const shows = await prisma.show.findMany({
-    where: { screen: { cinemaId: cinema.id }, startsAt: { gte: start, lt: end } },
-    select: {
-      id: true,
-      movieId: true,
-      startsAt: true,
-      endsAt: true,
-      format: true,
-      priceCents: true,
-      screen: { select: { name: true } },
-    },
-    orderBy: [{ startsAt: "asc" }, { screen: { name: "asc" } }],
-  });
+  const shows = await ShowtimeModel.find({
+    cinemaId: cinema.id,
+    startsAt: { $gte: start, $lt: end },
+  })
+    .sort({ startsAt: 1, screen: 1 })
+    .lean();
 
   const catalog = await findMoviesByIds(shows.map((s) => s.movieId));
 
@@ -135,11 +128,13 @@ export async function listShowtimes(
     }
 
     entry.shows.push({
-      id: s.id,
+      // The Postgres show id, carried through the projection unchanged — this
+      // is the id the seat map on the booking service is opened with.
+      id: s._id,
       movieId: s.movieId,
       startsAt: s.startsAt.toISOString(),
       endsAt: s.endsAt.toISOString(),
-      screen: s.screen.name,
+      screen: s.screen,
       format: s.format,
       priceCents: s.priceCents,
     });

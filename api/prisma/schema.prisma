@@ -76,6 +76,12 @@ model Show {
   screenId   String   @map("screen_id") @db.Uuid
   /// MongoDB movie document _id, as a plain string. Deliberately not a foreign key.
   movieId    String   @map("movie_id")
+  /// Copied from the Mongo catalog when the show is scheduled, so the booking
+  /// service can name the film on a seat map without reading Mongo — booking
+  /// owns Postgres and nothing else (DECISIONS entry 4). A copy, never edited
+  /// here: if the catalog retitles a film, rescheduling refreshes it. Nullable
+  /// only because rows that predate the column have nothing to copy.
+  movieTitle String?  @map("movie_title")
   startsAt   DateTime @map("starts_at") @db.Timestamptz(3)
   endsAt     DateTime @map("ends_at") @db.Timestamptz(3)
   /// Money is always integer minor units. Never a float.

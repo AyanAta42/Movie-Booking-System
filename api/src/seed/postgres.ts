@@ -38,13 +38,14 @@ function priceCentsFor(hour: number, format: string): number {
 
 async function resolveMovieIds() {
   await connectMongo();
-  const movies = await MovieModel.find({}, "slug formats").lean();
+  const movies = await MovieModel.find({}, "slug title formats").lean();
   if (movies.length === 0) {
     throw new Error("No movies in Mongo. Run `npm run seed:mongo` first.");
   }
   return movies.map((m) => ({
     movieId: String(m._id),
     slug: m.slug,
+    title: m.title,
     formats: (m.formats ?? ["2D"]) as string[],
   }));
 }
@@ -123,6 +124,9 @@ async function main() {
             data: {
               screenId: screen.id,
               movieId: movie.movieId,
+              // Copied at scheduling time so the booking service never has to
+              // read Mongo to name the film on a seat map.
+              movieTitle: movie.title,
               startsAt,
               endsAt,
               priceCents: priceCentsFor(hour, format),

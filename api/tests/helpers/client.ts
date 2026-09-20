@@ -55,3 +55,8 @@ export function confirm(deviceId: string, holdId: string) {
 export function getReservation(deviceId: string, holdId: string) {
   return send(`/reservations/${holdId}`, deviceId);
 }
+
+/// A plain GET. Browsing routes need no device id; booking reads send one.
+export function get<T = any>(path: string, deviceId: string = newDevice()) {
+  return send<T>(path, deviceId);
+}

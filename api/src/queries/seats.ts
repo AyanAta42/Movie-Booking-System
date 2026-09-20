@@ -1,6 +1,5 @@
 import { prisma } from "../db/postgres";
 import { NotFoundError } from "../errors";
-import { findMoviesByIds } from "./movies";
 
 export type SeatMapSeat = {
   /// The show_seat row id. This is what a reservation claims, not `seatId`.
@@ -40,7 +39,9 @@ export async function getSeatMap(showId: string, userId: string): Promise<SeatMa
     where: { id: showId },
     select: {
       id: true,
-      movieId: true,
+      // Booking's own copy of the title, not a lookup into the Mongo catalog —
+      // the booking service reads Postgres and nothing else.
+      movieTitle: true,
       startsAt: true,
       format: true,
       screen: { select: { name: true, cinema: { select: { name: true } } } },
@@ -60,7 +61,6 @@ export async function getSeatMap(showId: string, userId: string): Promise<SeatMa
     },
   });
 
-  const catalog = await findMoviesByIds([show.movieId]);
   const now = Date.now();
 
   const seats: SeatMapSeat[] = rows.map((r) => {
@@ -91,7 +91,7 @@ export async function getSeatMap(showId: string, userId: string): Promise<SeatMa
       format: show.format,
       screen: show.screen.name,
       cinema: show.screen.cinema.name,
-      movieTitle: catalog.get(show.movieId)?.title ?? "Unknown film",
+      movieTitle: show.movieTitle ?? "Unknown film",
     },
     rows: seats.reduce((m, s) => Math.max(m, s.gridRow + 1), 0),
     cols: seats.reduce((m, s) => Math.max(m, s.gridCol + 1), 0),
