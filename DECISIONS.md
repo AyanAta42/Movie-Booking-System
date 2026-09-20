@@ -73,7 +73,7 @@ perfectly independent, so this shards cleanly — not a different consistency mo
 
 ## 2. Catalog content lives in MongoDB
 
-**Date:** 2026-09-14 · **Status:** accepted
+**Date:** 2026-09-14 · **Status:** accepted, amended by entry 4 (2026-09-20)
 
 ### Context
 
@@ -89,6 +89,11 @@ screening has no certification, a documentary has no cast list worth modelling.
 
 Catalog content is a document in MongoDB, served on a physically separate read
 path from the write path in entry 1. The browse endpoints touch Mongo only.
+
+They did not, at first: from the first browse page until entry 4, cinemas and
+showtimes were read from Postgres, and nothing noticed the code had drifted from
+this sentence. Entry 4 made it true, and `tests/architecture/boundaries.test.ts`
+now fails if it stops being true.
 
 The schema is declared in Mongoose rather than left free-form, and `strict:
 false` is deliberately **not** set. Variable shape is the reason this lives in
@@ -110,9 +115,11 @@ them. `trailerUrl` is nullable because plenty of films genuinely have none.
 ### Consequences
 
 - **No foreign key can span the two stores.** `shows.movie_id` is an opaque
-  string holding a Mongo `_id`, and the join is enforced in application code.
-  This is the real cost of the decision and it is paid on every showtimes
-  request. It is made survivable rather than safe: `findMoviesByIds` drops an id
+  string holding a Mongo `_id`, enforced in application code. Until entry 4 this
+  join ran across both stores on every showtimes request; it now runs once, when
+  a show is scheduled — the title is copied into Postgres, the showtime into
+  Mongo — and a listing joins showtimes to films inside Mongo alone. It is still
+  made survivable rather than safe: `findMoviesByIds` drops an id
   that resolves to nothing, so a dangling reference loses one film from a listing
   instead of failing the request. An unenforceable constraint has to degrade,
   not throw.
@@ -189,3 +196,82 @@ exactly one winner — must pass with no cache in the system at all.
 Load arriving before week 5. If real contention shows up early, Redis moves up —
 but it moves up as a rejector in front of a guarantee already proven without it,
 never as a substitute for one.
+
+---
+
+## 4. Each service owns one store; the schedule is copied, not shared
+
+**Date:** 2026-09-20 · **Status:** accepted
+
+### Context
+
+The API was split into two deployable services — browsing and booking — each
+running as two replicas behind a gateway. Entry 2 had already said the browse
+endpoints touch Mongo only. The code did not: cinemas and showtimes were read
+from Postgres, and the seat map read film titles from Mongo. Both services
+needed both stores, so splitting the deployment left one database shared by
+everything — a browse spike still landed on the primary that arbitrates seat
+claims, the exact coupling entry 2 exists to prevent.
+
+The obstacle is that the schedule genuinely belongs to both. Booking cannot sell
+a seat for a show it does not know, and every `show_seats` row carries a foreign
+key to its show. Browsing cannot list "what's on tonight" without the same shows.
+
+### Decision
+
+Each service reads exactly one store, and data both need is **copied**, with a
+single owner:
+
+- **Postgres (booking) owns the schedule.** Cinemas, screens, seats and shows are
+  created there, because seats hang off them.
+- **Mongo (browsing) holds a read-only projection** of cinemas and showtimes,
+  written only by `src/seed/projection.ts`, under the **same ids** as the
+  Postgres rows. That shared id is the whole contract: a showtime listed by
+  browsing is opened on booking by the same id.
+- **Booking keeps its own copy of each film's title** (`shows.movie_title`), set
+  when the show is scheduled, so the seat map never reads Mongo.
+
+Enforced three ways: each container is given only its own store's connection
+string; `tests/architecture/boundaries.test.ts` walks each service's imports and
+fails if one reaches the other's database; `tests/browsing/projection.test.ts`
+fails if the copy and the original disagree about any show.
+
+### Alternatives rejected
+
+- **Keep one shared database.** No duplication, and no isolation: browse traffic
+  keeps competing with seat claims for the same primary. Splitting the
+  deployment without splitting the data buys independently scaled stateless
+  replicas and nothing else.
+- **Browsing asks booking for showtimes over HTTP.** No copy to drift — but
+  browsing then fails whenever booking does, and every browse request becomes
+  booking load. It turns a bulkhead into a dependency.
+- **Move the schedule wholly into Mongo.** Not possible without giving up the
+  storage-layer guarantee: `show_seats` needs a real foreign key to a real show
+  row in the same database as the seat claims (entry 1).
+
+### Consequences
+
+- **The copy can lag the original.** A cancelled show may stay listed until the
+  projection next runs. This is safe by construction: the copy lives on the side
+  that is allowed to be stale, and booking trusts only its own rows. A stale
+  listing can send a customer to a show booking refuses; it can never make
+  booking sell a seat it should not. The listed price may lag too, but the price
+  charged is always booking's own.
+- **Synchronisation is a batch job today.** `npm run seed` ends with the
+  projection, and the test suite rebuilds it every run. Once shows are scheduled
+  while the system is live, it becomes an event: booking publishes "show
+  scheduled", browsing applies it. The mapping does not change, only its
+  trigger — and that is the first place a message queue earns its keep here.
+- **What is duplicated:** cinema name and city, show times, screen name, format,
+  listed price, and the film title. Seats, holds and bookings exist only in
+  Postgres; synopsis, cast and artwork only in Mongo.
+- **The Postgres connection budget belongs to booking alone.** Browsing opens no
+  Postgres connections at all, which is the point.
+
+### What would make this wrong
+
+A schedule that changes often enough for a lagging copy to hurt customers —
+shows cancelled minutes before start, prices moving hourly. Then the projection
+has to become event-driven sooner, and browsing may need to confirm with booking
+at the moment of the click. The ownership would not change; only how quickly
+the copy follows it.

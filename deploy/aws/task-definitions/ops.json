@@ -1,0 +1,25 @@
+{
+  "family": "mbp-ops",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "ops",
+      "image": "{{ACCOUNT_ID}}.dkr.ecr.{{REGION}}.amazonaws.com/mbp-ops:latest",
+      "essential": true,
+      "environment": [{ "name": "TZ", "value": "{{TZ}}" }],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "arn:aws:ssm:{{REGION}}:{{ACCOUNT_ID}}:parameter/mbp/DATABASE_URL" },
+        { "name": "MONGO_URL", "valueFrom": "arn:aws:ssm:{{REGION}}:{{ACCOUNT_ID}}:parameter/mbp/MONGO_URL" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": { "awslogs-group": "/ecs/mbp", "awslogs-region": "{{REGION}}", "awslogs-stream-prefix": "ops" }
+      }
+    }
+  ]
+}

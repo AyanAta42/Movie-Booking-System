@@ -1,0 +1,31 @@
+{
+  "family": "mbp-browsing",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "browsing",
+      "image": "{{ACCOUNT_ID}}.dkr.ecr.{{REGION}}.amazonaws.com/mbp-api:latest",
+      "essential": true,
+      "portMappings": [{ "containerPort": 4000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "SERVICE", "value": "browsing" },
+        { "name": "PORT", "value": "4000" },
+        { "name": "TZ", "value": "{{TZ}}" }
+      ],
+      "secrets": [
+        { "name": "MONGO_URL", "valueFrom": "arn:aws:ssm:{{REGION}}:{{ACCOUNT_ID}}:parameter/mbp/MONGO_URL" }
+      ],
+      "healthCheck": { "command": ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], "interval": 10, "timeout": 5, "retries": 3, "startPeriod": 20 },
+      "stopTimeout": 10,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": { "awslogs-group": "/ecs/mbp", "awslogs-region": "{{REGION}}", "awslogs-stream-prefix": "browsing" }
+      }
+    }
+  ]
+}

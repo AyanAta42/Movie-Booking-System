@@ -7,3 +7,6 @@ build/
 .DS_Store
 .vscode/
 .idea/
+
+# Task definitions with your account id filled in (deploy/aws/publish.ps1)
+deploy/aws/rendered/
