@@ -1,0 +1,12 @@
+# Keeps the build context small. node_modules alone is hundreds of MB, and on a
+# OneDrive folder uploading it to the Docker daemon is the slowest part of a build.
+node_modules
+dist
+tests
+vitest.config.ts
+*.log
+
+# Never bake local credentials into an image. Containers get their config from
+# environment variables set by compose (or the ECS task definition).
+.env
+.env.*

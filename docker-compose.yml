@@ -1,3 +1,23 @@
+# Shared by both microservices: same image, same shape, different SERVICE.
+# (An `x-` key is ignored by compose itself; it exists to be referenced below.)
+x-api-service: &api-service
+  profiles: ["stack"]
+  build:
+    context: ./api
+    target: runtime
+  restart: unless-stopped
+  # Two replicas of each service, like ECS "desired count: 2" or a Kubernetes
+  # Deployment with replicas: 2. No container_name — replicas need unique names.
+  deploy:
+    replicas: 2
+  healthcheck:
+    # The slim node image has no curl; node's built-in fetch does the job.
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+    start_period: 10s
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -47,6 +67,96 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+
+  # ===========================================================================
+  # The microservices stack. Behind the "stack" profile, so plain
+  # `docker compose up -d` still starts only the databases and builds nothing.
+  #
+  #   docker compose --profile stack up -d --build      then open :8080
+  #
+  #   browser -> gateway :8080 -> web            (the React site)
+  #                            -> browsing x2    (/api/movies, /api/cinemas)
+  #                            -> booking  x2    (/api/shows, /api/reservations)
+  #                                  -> postgres, mongo
+  # ===========================================================================
+
+  # Applies migrations once, then exits. The services wait for it to succeed,
+  # so no replica ever starts against a schema it does not understand.
+  migrate:
+    profiles: ["stack"]
+    build:
+      context: ./api
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://mbp:mbp@postgres:5432/mbp?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Each service is given the address of its own store and nothing else
+  # (DECISIONS entry 4). Browsing has no DATABASE_URL, booking has no
+  # MONGO_URL — so a stray query into the other store fails at once instead of
+  # quietly re-coupling the two.
+
+  browsing:
+    <<: *api-service
+    environment:
+      SERVICE: browsing
+      PORT: "4000"
+      MONGO_URL: mongodb://mongo:27017/mbp_catalog
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  booking:
+    <<: *api-service
+    environment:
+      SERVICE: booking
+      PORT: "4000"
+      # Connection budget. Postgres allows 100 connections in total, and every
+      # replica opens its own pool — adding replicas does NOT add database
+      # capacity. 2 x 20 = 40, the same total the single API process had,
+      # leaving room for the test suite (40) and psql. Booking is now the only
+      # service with a Postgres pool at all.
+      DATABASE_URL: postgresql://mbp:mbp@postgres:5432/mbp?schema=public&connection_limit=20
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  web:
+    profiles: ["stack"]
+    build: ./web
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # The single front door. Stands in for an AWS Application Load Balancer.
+  gateway:
+    profiles: ["stack"]
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      browsing:
+        condition: service_healthy
+      booking:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   postgres-data:
