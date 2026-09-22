@@ -10,7 +10,7 @@ import {
 import { getReservation, type Reservation } from "../queries/reservations";
 
 /// How long a hold survives without being confirmed.
-export const HOLD_MINUTES = 0.1;
+export const HOLD_MINUTES = 10;
 
 /// A cap, so one caller cannot claim an entire screen in one request.
 const MAX_SEATS = 10;
