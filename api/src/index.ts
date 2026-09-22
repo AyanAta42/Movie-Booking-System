@@ -29,6 +29,12 @@ async function start() {
     console.log(`[api] ${service} listening on http://0.0.0.0:${port}`)
   );
 
+  // Outlive the load balancer's 60s idle timeout. Node's default is 5s, so node
+  // could close an idle connection just as the ALB reused it, and that request
+  // came back as a 502. It showed up whenever a task was stopped under load.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+
   // Containers are stopped with SIGTERM — on every deploy, scale-in, or
   // `docker compose down`. Without a handler, node running as PID 1 ignores it
   // and gets SIGKILLed after the grace period, cutting off any reservation
