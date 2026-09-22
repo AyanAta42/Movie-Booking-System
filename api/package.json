@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest run --reporter=verbose",
-    "test:load": "tsx tests/load/burst.ts"
+    "test:load": "tsx tests/load/burst.ts",
+    "test:live": "tsx tests/load/live.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
