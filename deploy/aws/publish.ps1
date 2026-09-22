@@ -112,7 +112,20 @@ if (-not $DryRun) {
   }
 
   Invoke-Step "log in to ECR" {
-    aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $registry
+    # Not a plain pipe. Windows PowerShell 5.1 re-encodes a native command's
+    # output on its way to another native command and appends a trailing
+    # newline, which docker sends as part of the password; ECR rejects it with
+    # a 400. Writing the token to a BOM-free file and redirecting it through
+    # cmd hands docker the exact bytes aws produced.
+    $token = aws ecr get-login-password --region $Region
+    if ($LASTEXITCODE -ne 0) { return }
+    $tokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "mbp-ecr-token.txt"
+    try {
+      [System.IO.File]::WriteAllText($tokenFile, $token, (New-Object System.Text.UTF8Encoding $false))
+      cmd /c "docker login --username AWS --password-stdin $registry < `"$tokenFile`""
+    } finally {
+      Remove-Item $tokenFile -Force -ErrorAction SilentlyContinue
+    }
   }
 
   foreach ($img in $images) {
